@@ -1,7 +1,6 @@
 package main
 
 import (
-	"encoding/json"
 	"fmt"
 	"io/fs"
 	"os"
@@ -9,9 +8,9 @@ import (
 	"runtime/pprof"
 	"strings"
 
-	. "github.com/antonmedv/fx/pkg/dict"
-	. "github.com/antonmedv/fx/pkg/json"
-	. "github.com/antonmedv/fx/pkg/reducer"
+	. "github.com/antonmedv/fx/pkg/types"
+	"github.com/antonmedv/fx/pkg/yaml"
+
 	. "github.com/antonmedv/fx/pkg/theme"
 	"github.com/charmbracelet/bubbles/key"
 	"github.com/charmbracelet/bubbles/textinput"
@@ -22,9 +21,8 @@ import (
 )
 
 var (
-	flagHelp      bool
-	flagVersion   bool
-	flagPrintCode bool
+	flagHelp    bool
+	flagVersion bool
 )
 
 func main() {
@@ -35,8 +33,6 @@ func main() {
 			flagHelp = true
 		case "-v", "-V", "--version":
 			flagVersion = true
-		case "--print-code":
-			flagPrintCode = true
 		default:
 			args = append(args, arg)
 		}
@@ -80,10 +76,9 @@ func main() {
 	}
 
 	stdinIsTty := isatty.IsTerminal(os.Stdin.Fd())
-	stdoutIsTty := isatty.IsTerminal(os.Stdout.Fd())
 	filePath := ""
 	fileName := ""
-	var dec *json.Decoder
+	var dec *yaml.Decoder
 	if stdinIsTty {
 		// Nothing was piped, maybe file argument?
 		if len(args) >= 1 {
@@ -99,64 +94,19 @@ func main() {
 				}
 			}
 			fileName = path.Base(filePath)
-			dec = json.NewDecoder(f)
-			args = args[1:]
+			dec = yaml.NewDecoder(f)
 		}
 	} else {
-		dec = json.NewDecoder(os.Stdin)
+		dec = yaml.NewDecoder(os.Stdin)
 	}
 	if dec == nil {
 		fmt.Println(usage(DefaultKeyMap()))
 		os.Exit(1)
 	}
-	dec.UseNumber()
-	object, err := Parse(dec)
+	object, err := yaml.Parse(dec)
 	if err != nil {
-		fmt.Println("JSON Parse Error:", err.Error())
+		fmt.Println("YAML Parse Error:", err.Error())
 		os.Exit(1)
-	}
-	lang, ok := os.LookupEnv("FX_LANG")
-	if !ok {
-		lang = "js"
-	}
-	var fxrc string
-	if lang == "js" || lang == "node" {
-		home, err := os.UserHomeDir()
-		if err == nil {
-			b, err := os.ReadFile(path.Join(home, ".fxrc.js"))
-			if err == nil {
-				fxrc = "\n" + string(b)
-				if lang == "js" {
-					parts := strings.SplitN(fxrc, "// nodejs:", 2)
-					fxrc = parts[0]
-				}
-			}
-		}
-	}
-	if dec.More() {
-		os.Exit(stream(dec, object, lang, args, theme, fxrc))
-	}
-	if len(args) > 0 || !stdoutIsTty {
-		if len(args) > 0 && flagPrintCode {
-			fmt.Print(GenerateCode(lang, args, fxrc))
-			return
-		}
-		if lang == "js" {
-			simplePath, ok := SplitSimplePath(args)
-			if ok {
-				output := GetBySimplePath(object, simplePath)
-				Echo(output, theme)
-				os.Exit(0)
-			}
-			vm, fn, err := CreateJS(args, fxrc)
-			if err != nil {
-				fmt.Println(err)
-				os.Exit(1)
-			}
-			os.Exit(ReduceJS(vm, fn, object, theme))
-		} else {
-			os.Exit(Reduce(object, lang, args, theme, fxrc))
-		}
 	}
 
 	// Start interactive mode.
@@ -169,7 +119,7 @@ func main() {
 	parents := map[string]string{}
 	children := map[string][]string{}
 	canBeExpanded := map[string]bool{}
-	Dfs(object, func(it Iterator) {
+	yaml.Dfs(object, func(it yaml.Iterator) {
 		parents[it.Path] = it.Parent
 		children[it.Parent] = append(children[it.Parent], it.Path)
 		switch it.Object.(type) {
@@ -184,7 +134,7 @@ func main() {
 	m := &model{
 		fileName:        fileName,
 		theme:           theme,
-		json:            object,
+		yaml:            object,
 		showSize:        showSize,
 		width:           80,
 		height:          60,
@@ -199,9 +149,9 @@ func main() {
 		wrap:            true,
 		searchInput:     input,
 	}
-	m.collectSiblings(m.json, "")
+	m.collectSiblings(m.yaml, "")
 	p := tea.NewProgram(m, tea.WithAltScreen(), tea.WithMouseCellMotion())
-	if err := p.Start(); err != nil {
+	if _, err := p.Run(); err != nil {
 		panic(err)
 	}
 	if cpuProfile != "" {
@@ -214,13 +164,12 @@ type model struct {
 	exitCode      int
 	width, height int
 	windowHeight  int
-	footerHeight  int
 	wrap          bool
 	theme         Theme
 	showSize      bool // Show number of elements in preview
 
 	fileName string
-	json     interface{}
+	yaml     interface{}
 	lines    []string
 
 	mouseWheelDelta int // Number of lines the mouse wheel will scroll
@@ -425,7 +374,7 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.render()
 
 		case key.Matches(msg, m.keyMap.ExpandAll):
-			Dfs(m.json, func(it Iterator) {
+			yaml.Dfs(m.yaml, func(it yaml.Iterator) {
 				switch it.Object.(type) {
 				case *Dict, Array:
 					m.expandedPaths[it.Path] = true
@@ -547,7 +496,7 @@ func (m *model) render() {
 	} else {
 		m.lineNumberToPath = make(map[int]string, len(m.lineNumberToPath))
 	}
-	m.lines = m.print(m.json, 1, 0, 0, "", true)
+	m.lines = m.print(m.yaml, 1, 0, 0, "", true)
 
 	if m.offset > len(m.lines)-1 {
 		m.GotoBottom()
@@ -592,10 +541,10 @@ func (m *model) collapseRecursively(path string) {
 }
 
 func (m *model) collectSiblings(v interface{}, path string) {
-	switch v.(type) {
+	switch value := v.(type) {
 	case *Dict:
 		prev := ""
-		for _, k := range v.(*Dict).Keys {
+		for _, k := range value.Keys {
 			subpath := path + "." + k
 			if prev != "" {
 				m.nextSiblings[prev] = subpath
@@ -608,7 +557,7 @@ func (m *model) collectSiblings(v interface{}, path string) {
 
 	case Array:
 		prev := ""
-		for i, value := range v.(Array) {
+		for i, value := range value {
 			subpath := fmt.Sprintf("%v[%v]", path, i)
 			if prev != "" {
 				m.nextSiblings[prev] = subpath

@@ -1,8 +1,9 @@
-package json
+package yaml
 
 import (
 	"fmt"
-	. "github.com/antonmedv/fx/pkg/dict"
+
+	. "github.com/antonmedv/fx/pkg/types"
 )
 
 func Stringify(v interface{}) string {
@@ -17,8 +18,8 @@ func Stringify(v interface{}) string {
 			return "false"
 		}
 
-	case Number:
-		return v.String()
+	case int, int8, int16, int32, int64, uint, uint8, uint16, uint32, uint64, float32, float64:
+		return fmt.Sprintf("%v", v)
 
 	case string:
 		return fmt.Sprintf("%q", v)

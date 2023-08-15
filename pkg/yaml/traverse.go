@@ -1,8 +1,9 @@
-package json
+package yaml
 
 import (
 	"fmt"
-	. "github.com/antonmedv/fx/pkg/dict"
+
+	. "github.com/antonmedv/fx/pkg/types"
 )
 
 type Iterator struct {

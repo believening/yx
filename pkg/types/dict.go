@@ -1,4 +1,6 @@
-package dict
+package types
+
+import "sort"
 
 type Dict struct {
 	Keys   []string
@@ -21,6 +23,7 @@ func (d *Dict) Set(key string, value interface{}) {
 	_, exists := d.Values[key]
 	if !exists {
 		d.Keys = append(d.Keys, key)
+		sort.Strings(d.Keys)
 	}
 	d.Values[key] = value
 }

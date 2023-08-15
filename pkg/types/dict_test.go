@@ -1,4 +1,4 @@
-package dict
+package types
 
 import "testing"
 

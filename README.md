@@ -1,3 +1,14 @@
+
+fork from **[fx](https://github.com/antonmedv/fx)**, modified to support viewing yaml in terminal
+
+TODO list:
+
+- [ ] multiple yaml documents in one file
+- [ ] search
+- [ ] filter fields
+
+---
+
 <a href="https://webpod.dev/?from=fx"><img src="https://webpod.dev/img/banner.png" alt="Webpod - deploy JavaScript apps" width="190" align="right"></a>
 
 <p align="center"><a href="https://fx.wtf"><img src="https://medv.io/assets/fx/fx-preview.gif" width="500" alt="fx preview"></a></p>

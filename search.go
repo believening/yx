@@ -4,9 +4,11 @@ import (
 	"fmt"
 	"regexp"
 
-	. "github.com/antonmedv/fx/pkg/dict"
-	. "github.com/antonmedv/fx/pkg/json"
+	. "github.com/antonmedv/fx/pkg/types"
+	. "github.com/antonmedv/fx/pkg/yaml"
 )
+
+// todo: support yaml
 
 type searchResult struct {
 	path   string
@@ -57,8 +59,8 @@ func (m *model) doSearch(s string) {
 		m.searchInput.Blur()
 		return
 	}
-	indexes := re.FindAllStringIndex(Stringify(m.json), -1)
-	m.remapSearchResult(m.json, "", 0, indexes, 0, nil)
+	indexes := re.FindAllStringIndex(Stringify(m.yaml), -1)
+	m.remapSearchResult(m.yaml, "", 0, indexes, 0, nil)
 	m.indexSearchResults()
 	m.searchInput.Blur()
 	m.showSearchResults = true
@@ -82,8 +84,8 @@ func (m *model) remapSearchResult(object interface{}, path string, pos int, inde
 		id, current = m.findRanges(valueRange, s, path, pos, indexes, id, current)
 		return pos + len(s), id, current
 
-	case Number:
-		s := object.(Number).String()
+	case int, int8, int16, int32, int64, uint, uint8, uint16, uint32, uint64, float32, float64:
+		s := fmt.Sprintf("%v", object)
 		id, current = m.findRanges(valueRange, s, path, pos, indexes, id, current)
 		return pos + len(s), id, current
 

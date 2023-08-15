@@ -4,9 +4,8 @@ import (
 	"fmt"
 	"strings"
 
-	. "github.com/antonmedv/fx/pkg/dict"
-	. "github.com/antonmedv/fx/pkg/json"
 	"github.com/antonmedv/fx/pkg/theme"
+	. "github.com/antonmedv/fx/pkg/types"
 )
 
 func (m *model) connect(path string, lineNumber int) {
@@ -19,6 +18,14 @@ func (m *model) connect(path string, lineNumber int) {
 	m.lineNumberToPath[lineNumber] = path
 }
 
+// print returns the lines to be rendered
+//
+//   - v: the object to be rendered
+//   - level: the depth of the object
+//   - lineNumber: is the starting line number of the content rendered by this function
+//   - keyEndPos: is the position of the end of the key?
+//   - path: is the path of the object
+//   - selectableValues: is whether the values are selectable
 func (m *model) print(v interface{}, level, lineNumber, keyEndPos int, path string, selectableValues bool) []string {
 	m.connect(path, lineNumber)
 	ident := strings.Repeat("  ", level)
@@ -40,11 +47,11 @@ func (m *model) print(v interface{}, level, lineNumber, keyEndPos int, path stri
 			return []string{merge(m.explode("false", searchValue, m.theme.Boolean, path, selectableValues))}
 		}
 
-	case Number:
-		return []string{merge(m.explode(v.(Number).String(), searchValue, m.theme.Number, path, selectableValues))}
+	case int, int8, int16, int32, int64, uint, uint8, uint16, uint32, uint64, float32, float64:
+		return []string{merge(m.explode(fmt.Sprintf("%v", v), searchValue, m.theme.Number, path, selectableValues))}
 
 	case string:
-		line := fmt.Sprintf("%q", v)
+		line := fmt.Sprintf("%s", v)
 		chunks := m.explode(line, searchValue, m.theme.String, path, selectableValues)
 		if m.wrap && keyEndPos+width(line) > m.width {
 			return wrapLines(chunks, keyEndPos, m.width, subident)
@@ -56,8 +63,12 @@ func (m *model) print(v interface{}, level, lineNumber, keyEndPos int, path stri
 		if !m.expandedPaths[path] {
 			return []string{m.preview(v, path, selectableValues)}
 		}
-		output := []string{m.printOpenBracket("{", highlight, path, selectableValues)}
-		lineNumber++ // bracket is on separate line
+		var output []string
+		if path != "" && // not root
+			!strings.Contains(path[strings.LastIndex(path, "."):], "[") { // not a item in array
+			output = append(output, "")
+			lineNumber++
+		}
 		keys := v.(*Dict).Keys
 		for i, k := range keys {
 			subpath := path + "." + k
@@ -68,43 +79,43 @@ func (m *model) print(v interface{}, level, lineNumber, keyEndPos int, path stri
 				delimRanges = highlight.delim
 			}
 			m.connect(subpath, lineNumber)
-			key := fmt.Sprintf("%q", k)
 			keyTheme := m.theme.Key(i, len(keys))
-			key = merge(m.explode(key, keyRanges, keyTheme, subpath, true))
+			key := merge(m.explode(k, keyRanges, keyTheme, subpath, true))
 			value, _ := v.(*Dict).Get(k)
 			delim := merge(m.explode(": ", delimRanges, m.theme.Syntax, subpath, false))
 			keyEndPos := width(ident) + width(key) + width(delim)
 			lines := m.print(value, level+1, lineNumber, keyEndPos, subpath, false)
 			lines[0] = ident + key + delim + lines[0]
-			if i < len(keys)-1 {
-				lines[len(lines)-1] += m.printComma(",", highlight)
-			}
 			output = append(output, lines...)
 			lineNumber += len(lines)
 		}
-		output = append(output, subident+m.printCloseBracket("}", highlight, path, false))
 		return output
 
 	case Array:
 		if !m.expandedPaths[path] {
 			return []string{m.preview(v, path, selectableValues)}
 		}
-		output := []string{m.printOpenBracket("[", highlight, path, selectableValues)}
-		lineNumber++ // bracket is on separate line
+		var output []string
+		if path != "" && // not root
+			!strings.Contains(path[strings.LastIndex(path, "."):], "[") { // not a item in array
+			output = append(output, m.printOpenBracket("", highlight, path, selectableValues))
+			lineNumber++ // bracket is on separate line
+		}
 		slice := v.(Array)
 		for i, value := range slice {
 			subpath := fmt.Sprintf("%v[%v]", path, i)
-			s := m.highlightIndex[subpath]
 			m.connect(subpath, lineNumber)
 			lines := m.print(value, level+1, lineNumber, width(ident), subpath, true)
-			lines[0] = ident + lines[0]
-			if i < len(slice)-1 {
-				lines[len(lines)-1] += m.printComma(",", s)
+			if len(lines) == 1 && !m.expandedPaths[subpath] {
+				lines[0] = ident + "- " + lines[0]
+			} else {
+				bs := []byte(lines[0])
+				bs[len(ident)] = '-'
+				lines[0] = string(bs)
 			}
 			lineNumber += len(lines)
 			output = append(output, lines...)
 		}
-		output = append(output, subident+m.printCloseBracket("]", highlight, path, false))
 		return output
 
 	default:
@@ -120,10 +131,11 @@ func (m *model) preview(v interface{}, path string, selectableValues bool) strin
 	}
 	printValue := func(v interface{}) string {
 		switch v := v.(type) {
-		case nil, bool, Number:
+		case nil, bool,
+			int, int8, int16, int32, int64, uint, uint8, uint16, uint32, uint64, float32, float64:
 			return previewStyle(fmt.Sprintf("%v", v))
 		case string:
-			return previewStyle(fmt.Sprintf("%q", v))
+			return previewStyle(fmt.Sprintf("%s", v))
 		case *Dict:
 			if m.showSize {
 				return previewStyle(toLowerNumber(fmt.Sprintf("{\u2026%v\u2026}", len(v.Keys))))

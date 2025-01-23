@@ -4,12 +4,7 @@ use crossterm::{
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
 };
 use serde_yaml::Value;
-use std::{
-    env, io,
-    io::Read,
-    path::Path,
-    time::Duration,
-};
+use std::{env, io, io::Read, path::Path, time::Duration};
 use tui::{
     backend::CrosstermBackend,
     layout::{Constraint, Direction, Layout},
@@ -48,7 +43,11 @@ impl TreeNode {
                 }
             }
             Value::Tagged(tagged) => {
-                children.push(TreeNode::new("tagged".to_string(), tagged.value.clone(), depth + 1));
+                children.push(TreeNode::new(
+                    "tagged".to_string(),
+                    tagged.value.clone(),
+                    depth + 1,
+                ));
             }
             _ => {}
         }
@@ -82,6 +81,47 @@ impl TreeNode {
 fn build_yaml_tree(input: &str) -> TreeNode {
     let value: Value = serde_yaml::from_str(input).unwrap();
     TreeNode::new("root".to_string(), value, 0)
+}
+
+fn process_node(tree: &mut TreeNode, cursor_pos: usize, mut action: impl FnMut(&mut TreeNode)) {
+    // Get the current node
+    let nodes = tree.flatten();
+    if let Some(node) = nodes.get(cursor_pos) {
+        // Only process mappable/sequence nodes
+        if matches!(node.value, Value::Mapping(_) | Value::Sequence(_)) {
+            // Build the full path to this node
+            let mut path = vec![];
+            let mut current = node;
+            while let Some(parent) = nodes.iter().find(|n| n.children.contains(current)) {
+                path.push(parent.key.clone());
+                current = parent;
+            }
+            path.reverse();
+            path.push(node.key.clone());
+
+            // Traverse the tree using the path and collect mutable references
+            let mut target_node: Option<&mut TreeNode> = Some(tree);
+            for key in path.iter().skip(1) {
+                if let Some(current_mut) = target_node {
+                    if let Some(found) = current_mut
+                        .children
+                        .iter_mut()
+                        .find(|child| &child.key == key)
+                    {
+                        target_node = Some(found);
+                    } else {
+                        target_node = None;
+                        break;
+                    }
+                }
+            }
+
+            // Apply action to the found node
+            if let Some(target) = target_node {
+                action(target);
+            }
+        }
+    }
 }
 
 fn main() -> io::Result<()> {
@@ -125,23 +165,25 @@ fn main() -> io::Result<()> {
     let mut should_quit = false;
 
     while !should_quit {
-            terminal.draw(|f| {
-                let size = f.size();
-                let nodes = tree.flatten();
-                let max_y = (size.height - 1) as usize;
+        terminal.draw(|f| {
+            let size = f.size();
+            let nodes = tree.flatten();
+            let _max_y = (size.height - 1) as usize;
 
-                let chunks = Layout::default()
-                    .direction(if debug_mode { Direction::Horizontal } else { Direction::Vertical })
-                    .constraints(
-                        if debug_mode {
-                            [Constraint::Percentage(70), Constraint::Percentage(30)].as_ref()
-                        } else {
-                            [Constraint::Percentage(100)].as_ref()
-                        }
-                    )
-                    .split(size);
+            let chunks = Layout::default()
+                .direction(if debug_mode {
+                    Direction::Horizontal
+                } else {
+                    Direction::Vertical
+                })
+                .constraints(if debug_mode {
+                    [Constraint::Percentage(70), Constraint::Percentage(30)].as_ref()
+                } else {
+                    [Constraint::Percentage(100)].as_ref()
+                })
+                .split(size);
 
-                let text = nodes
+            let text = nodes
                 .iter()
                 .enumerate()
                 .map(|(i, node)| {
@@ -165,13 +207,25 @@ fn main() -> io::Result<()> {
                                 ("▶", "[...]".to_string())
                             }
                         }
-                        Value::Tagged(tagged) => {
-                            (" ", serde_yaml::to_string(&tagged.value).unwrap().trim().to_string())
-                        }
-                        _ => (" ", serde_yaml::to_string(&node.value).unwrap().trim().to_string()),
+                        Value::Tagged(tagged) => (
+                            " ",
+                            serde_yaml::to_string(&tagged.value)
+                                .unwrap()
+                                .trim()
+                                .to_string(),
+                        ),
+                        _ => (
+                            " ",
+                            serde_yaml::to_string(&node.value)
+                                .unwrap()
+                                .trim()
+                                .to_string(),
+                        ),
                     };
 
-                    let full_text = if matches!(node.value, Value::Mapping(_) | Value::Sequence(_)) && node.expanded {
+                    let full_text = if matches!(node.value, Value::Mapping(_) | Value::Sequence(_))
+                        && node.expanded
+                    {
                         format!("{} {}{}:", prefix, indent, node.key)
                     } else {
                         format!("{} {}{}: {}", prefix, indent, node.key, content)
@@ -181,14 +235,12 @@ fn main() -> io::Result<()> {
                         .into_iter()
                         .map(|line| {
                             if i == cursor_pos {
-                                Spans::from(vec![
-                                    Span::styled(
-                                        line.to_string(),
-                                        Style::default()
-                                            .fg(Color::Yellow)
-                                            .add_modifier(Modifier::BOLD),
-                                    )
-                                ])
+                                Spans::from(vec![Span::styled(
+                                    line.to_string(),
+                                    Style::default()
+                                        .fg(Color::Yellow)
+                                        .add_modifier(Modifier::BOLD),
+                                )])
                             } else {
                                 Spans::from(vec![Span::raw(line.to_string())])
                             }
@@ -211,7 +263,7 @@ fn main() -> io::Result<()> {
                 .collect::<Vec<_>>();
 
             let main_panel = Paragraph::new(text).block(Block::default().borders(Borders::ALL));
-            
+
             if debug_mode {
                 let debug_info = if let Some(node) = nodes.get(cursor_pos) {
                     let mut path = vec![];
@@ -223,7 +275,7 @@ fn main() -> io::Result<()> {
                     path.reverse();
                     path.push(node.key.clone());
                     let path = path.join(" > ");
-                    
+
                     let value_type = match &node.value {
                         Value::Null => "Null",
                         Value::Bool(_) => "Bool",
@@ -233,13 +285,18 @@ fn main() -> io::Result<()> {
                         Value::Mapping(_) => "Mapping",
                         Value::Tagged(_) => "Tagged",
                     };
-                    
-                    let expanded_status = if matches!(node.value, Value::Mapping(_) | Value::Sequence(_)) {
-                        if node.expanded { "Expanded" } else { "Collapsed" }
-                    } else {
-                        "N/A"
-                    };
-                    
+
+                    let expanded_status =
+                        if matches!(node.value, Value::Mapping(_) | Value::Sequence(_)) {
+                            if node.expanded {
+                                "Expanded"
+                            } else {
+                                "Collapsed"
+                            }
+                        } else {
+                            "N/A"
+                        };
+
                     Text::from(vec![
                         Spans::from(vec![
                             Span::raw("Path: "),
@@ -257,10 +314,10 @@ fn main() -> io::Result<()> {
                 } else {
                     Text::from("No node selected")
                 };
-                
+
                 let debug_panel = Paragraph::new(debug_info)
                     .block(Block::default().borders(Borders::ALL).title("Debug Info"));
-                
+
                 f.render_widget(main_panel, chunks[0]);
                 f.render_widget(debug_panel, chunks[1]);
             } else {
@@ -285,74 +342,17 @@ fn main() -> io::Result<()> {
                             }
                         }
                         KeyCode::Char('h') => {
-                            // Get the current node
-                            let nodes = tree.flatten();
-                            if let Some(node) = nodes.get(cursor_pos) {
-                                // Only process mappable/sequence nodes
-                                if matches!(node.value, Value::Mapping(_) | Value::Sequence(_)) {
-                                    // Build the full path to this node
-                                    let mut path = vec![];
-                                    let mut current = node;
-                                    while let Some(parent) = nodes.iter().find(|n| n.children.contains(current)) {
-                                        path.push(parent.key.clone());
-                                        current = parent;
-                                    }
-                                    path.reverse();
-                                    path.push(node.key.clone());
-                                    
-                                    // Traverse the tree using the path
-                                    let mut current = &mut tree;
-                                    for key in path.iter().skip(1) {
-                                        if let Some(found) = current
-                                            .children
-                                            .iter_mut()
-                                            .find(|child| &child.key == key)
-                                        {
-                                            current = found;
-                                        } else {
-                                            break;
-                                        }
-                                    }
-                                    
-                                    // Toggle the expanded state
-                                    current.expanded = !current.expanded;
-                                }
-                            }
+                            // Collapse the node
+                            process_node(&mut tree, cursor_pos, |node| node.expanded = false);
                         }
                         KeyCode::Char('l') => {
-                            // Get the current node
-                            let nodes = tree.flatten();
-                            if let Some(node) = nodes.get(cursor_pos) {
-                                // Only process mappable/sequence nodes
-                                if matches!(node.value, Value::Mapping(_) | Value::Sequence(_)) {
-                                    // Build the full path to this node
-                                    let mut path = vec![];
-                                    let mut current = node;
-                                    while let Some(parent) = nodes.iter().find(|n| n.children.contains(current)) {
-                                        path.push(parent.key.clone());
-                                        current = parent;
-                                    }
-                                    path.reverse();
-                                    path.push(node.key.clone());
-                                    
-                                    // Traverse the tree using the path
-                                    let mut current = &mut tree;
-                                    for key in path.iter().skip(1) {
-                                        if let Some(found) = current
-                                            .children
-                                            .iter_mut()
-                                            .find(|child| &child.key == key)
-                                        {
-                                            current = found;
-                                        } else {
-                                            break;
-                                        }
-                                    }
-                                    
-                                    // Toggle the expanded state
-                                    current.expanded = !current.expanded;
-                                }
-                            }
+                            // Expand the node
+                            process_node(&mut tree, cursor_pos, |node: &mut TreeNode| {
+                                node.expanded = true
+                            });
+                        }
+                        KeyCode::Enter => {
+                            // Toggle the expanded state
                         }
                         _ => {}
                     }

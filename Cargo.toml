@@ -1,0 +1,11 @@
+[package]
+name = "yaml-tui-viewer"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+crossterm = "0.28.1"
+serde = { version = "1.0.217", features = ["derive"] }
+serde_yaml = "0.9.34"
+textwrap = "0.16.1"
+tui = "0.19.0"

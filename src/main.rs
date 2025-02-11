@@ -142,6 +142,10 @@ fn main() -> io::Result<()> {
                 debug_mode = true;
                 i += 1;
             }
+            arg if !arg.starts_with("--") => {
+                file_path = Some(args[i].clone());
+                i += 1;
+            }
             _ => i += 1,
         }
     }

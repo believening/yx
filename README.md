@@ -39,7 +39,15 @@ yaml-tui-viewer/
 2. 克隆项目仓库
 3. 运行程序：
    ```bash
+   # 直接指定文件
+   cargo run test.yaml
+   
+   # 或使用 --input 参数
    cargo run --input test.yaml
+   
+   # 启用调试模式
+   cargo run --debug test.yaml
+
    ```
 4. 使用快捷键：
    - J/K: 上下移动

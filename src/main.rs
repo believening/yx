@@ -174,18 +174,27 @@ fn main() -> io::Result<()> {
             let nodes = tree.flatten();
             let _max_y = (size.height - 1) as usize;
 
-            let chunks = Layout::default()
-                .direction(if debug_mode {
-                    Direction::Horizontal
-                } else {
-                    Direction::Vertical
-                })
-                .constraints(if debug_mode {
-                    [Constraint::Percentage(70), Constraint::Percentage(30)].as_ref()
-                } else {
-                    [Constraint::Percentage(100)].as_ref()
-                })
+            // Create layout with space for help text at bottom
+            let main_chunks = Layout::default()
+                .direction(Direction::Vertical)
+                .constraints([
+                    Constraint::Min(5),       // Main content
+                    Constraint::Length(3),    // Help text
+                ])
                 .split(size);
+
+            let content_area = main_chunks[0];
+            let help_area = main_chunks[1];
+
+            // Split content area for main panel and debug panel if needed
+            let chunks = if debug_mode {
+                Layout::default()
+                    .direction(Direction::Horizontal)
+                    .constraints([Constraint::Percentage(70), Constraint::Percentage(30)].as_ref())
+                    .split(content_area)
+            } else {
+                vec![content_area]
+            };
 
             let text = nodes
                 .iter()
@@ -323,8 +332,31 @@ fn main() -> io::Result<()> {
                 f.render_widget(main_panel, chunks[0]);
                 f.render_widget(debug_panel, chunks[1]);
             } else {
-                f.render_widget(main_panel, size);
+                f.render_widget(main_panel, chunks[0]);
             }
+
+            // Render help text at the bottom
+            let help_text = vec![
+                Spans::from(vec![
+                    Span::styled("j/↓", Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
+                    Span::raw(": 下移  "),
+                    Span::styled("k/↑", Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
+                    Span::raw(": 上移  "),
+                    Span::styled("h", Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
+                    Span::raw(": 折叠节点  "),
+                    Span::styled("l", Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
+                    Span::raw(": 展开节点  "),
+                    Span::styled("q", Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
+                    Span::raw(": 退出")
+                ]),
+            ];
+            
+            let help_panel = Paragraph::new(help_text)
+                .block(Block::default().borders(Borders::ALL).title("帮助"))
+                .alignment(tui::layout::Alignment::Center)
+                .style(Style::default());
+                
+            f.render_widget(help_panel, help_area);
         })?;
 
         if event::poll(Duration::from_millis(100))? {

@@ -192,47 +192,45 @@ fn main() -> io::Result<()> {
                 .enumerate()
                 .map(|(i, node)| {
                     let indent = "  ".repeat(node.depth);
-                    let (prefix, content) = match &node.value {
+                    let content = match &node.value {
                         Value::Mapping(_) => {
                             if node.children.is_empty() {
-                                (" ", format!("{{}}"))
+                                format!("{{}}")
                             } else if node.expanded {
-                                ("▼", "".to_string())
+                                "".to_string()
                             } else {
-                                ("▶", format!("{{...}}"))
+                                format!("{{...}}")
                             }
                         }
                         Value::Sequence(_) => {
                             if node.children.is_empty() {
-                                (" ", "[]".to_string())
+                                "[]".to_string()
                             } else if node.expanded {
-                                ("▼", "".to_string())
+                                "".to_string()
                             } else {
-                                ("▶", "[...]".to_string())
+                                "[...]".to_string()
                             }
                         }
-                        Value::Tagged(tagged) => (
-                            " ",
+                        Value::Tagged(tagged) => {
                             serde_yaml::to_string(&tagged.value)
                                 .unwrap()
                                 .trim()
-                                .to_string(),
-                        ),
-                        _ => (
-                            " ",
+                                .to_string()
+                        }
+                        _ => {
                             serde_yaml::to_string(&node.value)
                                 .unwrap()
                                 .trim()
-                                .to_string(),
-                        ),
+                                .to_string()
+                        }
                     };
 
                     let full_text = if matches!(node.value, Value::Mapping(_) | Value::Sequence(_))
                         && node.expanded
                     {
-                        format!("{} {}{}:", prefix, indent, node.key)
+                        format!("{}{}:", indent, node.key)
                     } else {
-                        format!("{} {}{}: {}", prefix, indent, node.key, content)
+                        format!("{}{}: {}", indent, node.key, content)
                     };
                     let max_width = (size.width - 2) as usize; // Account for borders
                     let wrapped_text = textwrap::wrap(&full_text, max_width)

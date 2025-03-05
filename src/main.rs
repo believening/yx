@@ -7,7 +7,7 @@ use serde_yaml::Value;
 use std::{env, io, io::Read, path::Path, time::Duration};
 use tui::{
     backend::CrosstermBackend,
-    layout::{Constraint, Direction, Layout},
+    layout::{Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
     text::{Span, Spans, Text},
     widgets::{Block, Borders, Paragraph},
@@ -124,6 +124,13 @@ fn process_node(tree: &mut TreeNode, cursor_pos: usize, mut action: impl FnMut(&
     }
 }
 
+// 定义应用状态枚举
+#[derive(Debug, Clone, PartialEq)]
+enum AppMode {
+    Normal,
+    Search,
+}
+
 fn main() -> io::Result<()> {
     let mut input = String::new();
     let args: Vec<String> = env::args().collect();
@@ -167,6 +174,12 @@ fn main() -> io::Result<()> {
 
     let mut cursor_pos = 0;
     let mut should_quit = false;
+    
+    // 添加搜索相关状态
+    let mut app_mode = AppMode::Normal;
+    let mut search_query = String::new();
+    let mut search_results: Vec<usize> = Vec::new();
+    let mut current_match = 0;
 
     while !should_quit {
         terminal.draw(|f| {
@@ -174,12 +187,12 @@ fn main() -> io::Result<()> {
             let nodes = tree.flatten();
             let _max_y = (size.height - 1) as usize;
 
-            // Create layout with space for help text at bottom
+            // 根据当前模式调整布局
             let main_chunks = Layout::default()
                 .direction(Direction::Vertical)
                 .constraints([
                     Constraint::Min(5),       // Main content
-                    Constraint::Length(3),    // Help text
+                    Constraint::Length(4),    // Help text - 增加高度从3到4
                 ])
                 .split(size);
 
@@ -245,6 +258,7 @@ fn main() -> io::Result<()> {
                     let wrapped_text = textwrap::wrap(&full_text, max_width)
                         .into_iter()
                         .map(|line| {
+                            // 高亮当前选中行
                             if i == cursor_pos {
                                 Spans::from(vec![Span::styled(
                                     line.to_string(),
@@ -252,6 +266,25 @@ fn main() -> io::Result<()> {
                                         .fg(Color::Yellow)
                                         .add_modifier(Modifier::BOLD),
                                 )])
+                            } 
+                            // 高亮搜索结果
+                            else if !search_query.is_empty() && search_results.contains(&i) {
+                                // 当前匹配项使用不同颜色
+                                if search_results.get(current_match) == Some(&i) {
+                                    Spans::from(vec![Span::styled(
+                                        line.to_string(),
+                                        Style::default()
+                                            .fg(Color::Green)
+                                            .add_modifier(Modifier::BOLD),
+                                    )])
+                                } else {
+                                    Spans::from(vec![Span::styled(
+                                        line.to_string(),
+                                        Style::default()
+                                            .fg(Color::Blue)
+                                            .add_modifier(Modifier::BOLD),
+                                    )])
+                                }
                             } else {
                                 Spans::from(vec![Span::raw(line.to_string())])
                             }
@@ -335,21 +368,73 @@ fn main() -> io::Result<()> {
                 f.render_widget(main_panel, chunks[0]);
             }
 
-            // Render help text at the bottom
-            let help_text = vec![
-                Spans::from(vec![
-                    Span::styled("j/↓", Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
-                    Span::raw(": 下移  "),
-                    Span::styled("k/↑", Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
-                    Span::raw(": 上移  "),
-                    Span::styled("h", Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
-                    Span::raw(": 折叠节点  "),
-                    Span::styled("l", Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
-                    Span::raw(": 展开节点  "),
-                    Span::styled("q", Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
-                    Span::raw(": 退出")
-                ]),
-            ];
+            // 在搜索模式下显示搜索输入框在主视图底部
+            if app_mode == AppMode::Search {
+                // 计算搜索框的位置 - 放在主视图底部，但不与边框重叠
+                let search_area = Rect {
+                    x: chunks[0].x + 1, // 增加 x 坐标，避开左边框
+                    y: chunks[0].y + chunks[0].height - 2, // 减少 y 坐标，避开底部边框
+                    width: chunks[0].width - 4, // 减少宽度，避开右边框
+                    height: 1,
+                };
+                
+                // 渲染搜索文本
+                let search_span = Spans::from(vec![
+                    Span::styled("/", Style::default().fg(Color::Yellow)),
+                    Span::raw(search_query.clone()),
+                ]);
+                
+                let search_paragraph = Paragraph::new(search_span)
+                    .style(Style::default());
+                
+                f.render_widget(search_paragraph, search_area);
+                
+                // 显示光标位置
+                f.set_cursor(
+                    search_area.x + search_query.len() as u16 + 1,
+                    search_area.y,
+                );
+            }
+
+            // 根据当前模式显示不同的帮助信息
+            let help_text = match app_mode {
+                AppMode::Normal => {
+                    vec![
+                        Spans::from(vec![
+                            Span::styled("j/↓", Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
+                            Span::raw(": 下移  "),
+                            Span::styled("k/↑", Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
+                            Span::raw(": 上移  "),
+                            Span::styled("h", Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
+                            Span::raw(": 折叠节点  "),
+                            Span::styled("l", Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
+                            Span::raw(": 展开节点  "),
+                        ]),
+                        Spans::from(vec![
+                            Span::styled("/", Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
+                            Span::raw(": 搜索  "),
+                            Span::styled("n", Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
+                            Span::raw(": 下一个匹配  "),
+                            Span::styled("N", Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
+                            Span::raw(": 上一个匹配  "),
+                            Span::styled("Esc", Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
+                            Span::raw(": 取消高亮  "),
+                            Span::styled("q", Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
+                            Span::raw(": 退出"),
+                        ]),
+                    ]
+                },
+                AppMode::Search => {
+                    vec![
+                        Spans::from(vec![
+                            Span::styled("Enter", Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
+                            Span::raw(": 确认搜索  "),
+                            Span::styled("Esc", Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
+                            Span::raw(": 取消搜索"),
+                        ]),
+                    ]
+                },
+            };
             
             let help_panel = Paragraph::new(help_text)
                 .block(Block::default().borders(Borders::ALL).title("帮助"))
@@ -362,33 +447,119 @@ fn main() -> io::Result<()> {
         if event::poll(Duration::from_millis(100))? {
             if let Event::Key(key) = event::read()? {
                 if key.kind == KeyEventKind::Press {
-                    match key.code {
-                        KeyCode::Char('q') => should_quit = true,
-                        KeyCode::Down | KeyCode::Char('j') => {
-                            let total_lines = tree.flatten().len();
-                            if cursor_pos < total_lines - 1 {
-                                cursor_pos += 1;
+                    match app_mode {
+                        AppMode::Normal => {
+                            match key.code {
+                                KeyCode::Char('q') => should_quit = true,
+                                KeyCode::Down | KeyCode::Char('j') => {
+                                    let total_lines = tree.flatten().len();
+                                    if cursor_pos < total_lines - 1 {
+                                        cursor_pos += 1;
+                                    }
+                                }
+                                KeyCode::Up | KeyCode::Char('k') => {
+                                    if cursor_pos > 0 {
+                                        cursor_pos -= 1;
+                                    }
+                                }
+                                KeyCode::Char('h') => {
+                                    // Collapse the node
+                                    process_node(&mut tree, cursor_pos, |node| node.expanded = false);
+                                }
+                                KeyCode::Char('l') => {
+                                    // Expand the node
+                                    process_node(&mut tree, cursor_pos, |node: &mut TreeNode| {
+                                        node.expanded = true
+                                    });
+                                }
+                                KeyCode::Char('/') => {
+                                    // 进入搜索模式
+                                    app_mode = AppMode::Search;
+                                    search_query.clear();
+                                }
+                                KeyCode::Char('n') => {
+                                    // 跳转到下一个搜索结果
+                                    if !search_results.is_empty() {
+                                        current_match = (current_match + 1) % search_results.len();
+                                        if let Some(&pos) = search_results.get(current_match) {
+                                            cursor_pos = pos;
+                                        }
+                                    }
+                                }
+                                KeyCode::Char('N') => {
+                                    // 跳转到上一个搜索结果
+                                    if !search_results.is_empty() {
+                                        current_match = if current_match == 0 {
+                                            search_results.len() - 1
+                                        } else {
+                                            current_match - 1
+                                        };
+                                        if let Some(&pos) = search_results.get(current_match) {
+                                            cursor_pos = pos;
+                                        }
+                                    }
+                                }
+                                KeyCode::Esc => {
+                                    // 在普通模式下，Esc 用于清除搜索高亮
+                                    search_results.clear();
+                                    search_query.clear();
+                                }
+                                KeyCode::Char('c') if key.modifiers.contains(event::KeyModifiers::CONTROL) => {
+                                    // Ctrl+C 也可以清除搜索高亮
+                                    search_results.clear();
+                                    search_query.clear();
+                                }
+                                _ => {}
                             }
                         }
-                        KeyCode::Up | KeyCode::Char('k') => {
-                            if cursor_pos > 0 {
-                                cursor_pos -= 1;
+                        AppMode::Search => {
+                            match key.code {
+                                KeyCode::Esc => {
+                                    // 退出搜索模式
+                                    app_mode = AppMode::Normal;
+                                }
+                                KeyCode::Enter => {
+                                    // 执行搜索
+                                    app_mode = AppMode::Normal;
+                                    
+                                    // 如果搜索查询不为空，执行搜索
+                                    if !search_query.is_empty() {
+                                        let query = search_query.to_lowercase();
+                                        search_results.clear();
+                                        
+                                        // 搜索节点
+                                        for (i, node) in tree.flatten().iter().enumerate() {
+                                            let node_text = format!("{}", node.key).to_lowercase();
+                                            if node_text.contains(&query) {
+                                                search_results.push(i);
+                                            }
+                                            
+                                            // 也搜索值
+                                            if let Value::String(s) = &node.value {
+                                                if s.to_lowercase().contains(&query) {
+                                                    search_results.push(i);
+                                                }
+                                            }
+                                        }
+                                        
+                                        // 如果有结果，跳转到第一个匹配项
+                                        if !search_results.is_empty() {
+                                            current_match = 0;
+                                            cursor_pos = search_results[0];
+                                        }
+                                    }
+                                }
+                                KeyCode::Char(c) => {
+                                    // 添加字符到搜索查询
+                                    search_query.push(c);
+                                }
+                                KeyCode::Backspace => {
+                                    // 删除字符
+                                    search_query.pop();
+                                }
+                                _ => {}
                             }
                         }
-                        KeyCode::Char('h') => {
-                            // Collapse the node
-                            process_node(&mut tree, cursor_pos, |node| node.expanded = false);
-                        }
-                        KeyCode::Char('l') => {
-                            // Expand the node
-                            process_node(&mut tree, cursor_pos, |node: &mut TreeNode| {
-                                node.expanded = true
-                            });
-                        }
-                        KeyCode::Enter => {
-                            // Toggle the expanded state
-                        }
-                        _ => {}
                     }
                 }
             }

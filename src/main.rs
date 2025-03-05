@@ -5,11 +5,11 @@ use crossterm::{
 };
 use serde_yaml::Value;
 use std::{env, io, io::Read, path::Path, time::Duration};
-use tui::{
+use ratatui::{
     backend::CrosstermBackend,
     layout::{Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
-    text::{Span, Spans, Text},
+    text::{Line, Span, Text},
     widgets::{Block, Borders, Paragraph},
     Terminal,
 };
@@ -242,7 +242,7 @@ fn main() -> io::Result<()> {
                         .map(|line| {
                             // 高亮当前选中行
                             if i == cursor_pos {
-                                Spans::from(vec![Span::styled(
+                                Line::from(vec![Span::styled(
                                     line.to_string(),
                                     Style::default()
                                         .fg(Color::Yellow)
@@ -253,14 +253,14 @@ fn main() -> io::Result<()> {
                             else if !search_query.is_empty() && search_results.contains(&i) {
                                 // 当前匹配项使用不同颜色
                                 if search_results.get(current_match) == Some(&i) {
-                                    Spans::from(vec![Span::styled(
+                                    Line::from(vec![Span::styled(
                                         line.to_string(),
                                         Style::default()
                                             .fg(Color::Green)
                                             .add_modifier(Modifier::BOLD),
                                     )])
                                 } else {
-                                    Spans::from(vec![Span::styled(
+                                    Line::from(vec![Span::styled(
                                         line.to_string(),
                                         Style::default()
                                             .fg(Color::Blue)
@@ -268,7 +268,7 @@ fn main() -> io::Result<()> {
                                     )])
                                 }
                             } else {
-                                Spans::from(vec![Span::raw(line.to_string())])
+                                Line::from(vec![Span::raw(line.to_string())])
                             }
                         })
                         .collect::<Vec<_>>();
@@ -280,7 +280,7 @@ fn main() -> io::Result<()> {
                         result.push(line);
                         // Add spacing between wrapped lines except the last one
                         if line_idx < wrapped_len - 1 {
-                            result.push(Spans::from(vec![Span::raw("")]));
+                            result.push(Line::from(vec![Span::raw("")]));
                         }
                     }
                     result
@@ -364,11 +364,11 @@ fn main() -> io::Result<()> {
                         };
 
                     let mut debug_spans = vec![
-                        Spans::from(vec![
+                        Line::from(vec![
                             Span::raw("Path: "),
                             Span::styled(path, Style::default().fg(Color::Cyan)),
                         ]),
-                        Spans::from(vec![
+                        Line::from(vec![
                             Span::raw("Type: "),
                             Span::styled(value_type, Style::default().fg(Color::Green)),
                         ]),
@@ -376,14 +376,14 @@ fn main() -> io::Result<()> {
                     
                     // 添加长度信息（如果有）
                     if let Some(length) = length_info {
-                        debug_spans.push(Spans::from(vec![
+                        debug_spans.push(Line::from(vec![
                             Span::raw("Length: "),
                             Span::styled(length, Style::default().fg(Color::Magenta)),
                         ]));
                     }
                     
                     // 添加展开状态
-                    debug_spans.push(Spans::from(vec![
+                    debug_spans.push(Line::from(vec![
                         Span::raw("Status: "),
                         Span::styled(expanded_status, Style::default().fg(Color::Yellow)),
                     ]));
@@ -417,12 +417,12 @@ fn main() -> io::Result<()> {
                 };
                 
                 // 渲染搜索文本
-                let search_span = Spans::from(vec![
+                let search_span = Line::from(vec![
                     Span::styled("/", Style::default().fg(Color::Yellow)),
                     Span::raw(search_query.clone()),
                 ]);
                 
-                let search_paragraph = Paragraph::new(search_span)
+                let search_paragraph = Paragraph::new(vec![search_span])
                     .style(Style::default());
                 
                 f.render_widget(search_paragraph, search_area);
@@ -440,7 +440,7 @@ fn main() -> io::Result<()> {
                 let help_text = match app_mode {
                     AppMode::Normal => {
                         vec![
-                            Spans::from(vec![
+                            Line::from(vec![
                                 Span::styled("j/↓", Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
                                 Span::raw(": 下移  "),
                                 Span::styled("k/↑", Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
@@ -450,7 +450,7 @@ fn main() -> io::Result<()> {
                                 Span::styled("l", Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
                                 Span::raw(": 展开节点  "),
                             ]),
-                            Spans::from(vec![
+                            Line::from(vec![
                                 Span::styled("/", Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
                                 Span::raw(": 搜索  "),
                                 Span::styled("n", Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
@@ -466,7 +466,7 @@ fn main() -> io::Result<()> {
                     },
                     AppMode::Search => {
                         vec![
-                            Spans::from(vec![
+                            Line::from(vec![
                                 Span::styled("Enter", Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
                                 Span::raw(": 确认搜索  "),
                                 Span::styled("Esc", Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
@@ -478,7 +478,7 @@ fn main() -> io::Result<()> {
                 
                 let help_panel = Paragraph::new(help_text)
                     .style(Style::default())
-                    .alignment(tui::layout::Alignment::Left);
+                    .alignment(ratatui::layout::Alignment::Left);
                     
                 f.render_widget(help_panel, help_area);
             }

@@ -132,31 +132,34 @@ enum AppMode {
 }
 
 fn main() -> io::Result<()> {
-    let mut input = String::new();
     let args: Vec<String> = env::args().collect();
-
     let mut debug_mode = false;
+    let mut show_help = false;
     let mut file_path = None;
 
-    let mut i = 1;
-    while i < args.len() {
+    // 解析命令行参数
+    for i in 1..args.len() {
         match args[i].as_str() {
-            "--input" => {
-                file_path = Some(args[i + 1].clone());
-                i += 2;
+            "--debug" => debug_mode = true,
+            "--help" | "-h" => show_help = true,
+            _ => {
+                if file_path.is_none() && !args[i].starts_with('-') {
+                    file_path = Some(args[i].clone());
+                }
             }
-            "--debug" => {
-                debug_mode = true;
-                i += 1;
-            }
-            arg if !arg.starts_with("--") => {
-                file_path = Some(args[i].clone());
-                i += 1;
-            }
-            _ => i += 1,
         }
     }
 
+    // 如果没有提供文件路径，显示用法信息并退出
+    if file_path.is_none() {
+        println!("用法: {} [--debug] [--help] <yaml文件路径>", args[0]);
+        println!("选项:");
+        println!("  --debug    启用调试模式");
+        println!("  --help, -h 显示帮助视图");
+        return Ok(());
+    }
+
+    let mut input = String::new();
     if let Some(path) = file_path {
         input = std::fs::read_to_string(Path::new(&path))?;
     } else {
@@ -187,28 +190,7 @@ fn main() -> io::Result<()> {
             let nodes = tree.flatten();
             let _max_y = (size.height - 1) as usize;
 
-            // 根据当前模式调整布局
-            let main_chunks = Layout::default()
-                .direction(Direction::Vertical)
-                .constraints([
-                    Constraint::Min(5),       // Main content
-                    Constraint::Length(4),    // Help text - 增加高度从3到4
-                ])
-                .split(size);
-
-            let content_area = main_chunks[0];
-            let help_area = main_chunks[1];
-
-            // Split content area for main panel and debug panel if needed
-            let chunks = if debug_mode {
-                Layout::default()
-                    .direction(Direction::Horizontal)
-                    .constraints([Constraint::Percentage(70), Constraint::Percentage(30)].as_ref())
-                    .split(content_area)
-            } else {
-                vec![content_area]
-            };
-
+            // 先构建文本内容
             let text = nodes
                 .iter()
                 .enumerate()
@@ -306,10 +288,43 @@ fn main() -> io::Result<()> {
                 .flatten()
                 .collect::<Vec<_>>();
 
-            let main_panel = Paragraph::new(text).block(Block::default().borders(Borders::ALL));
+            // 首先确定是否需要显示帮助视图
+            let (main_area, help_area_opt) = if show_help {
+                // 垂直分割为内容区域和帮助区域
+                let chunks = Layout::default()
+                    .direction(Direction::Vertical)
+                    .constraints([
+                        Constraint::Min(5),       // Main content + debug (if enabled)
+                        Constraint::Length(4),    // Help text
+                    ])
+                    .split(size);
+                (chunks[0], Some(chunks[1]))
+            } else {
+                // 没有帮助视图，内容区域占据全部
+                (size, None)
+            };
 
-            if debug_mode {
-                let debug_info = if let Some(node) = nodes.get(cursor_pos) {
+            // 然后处理内容区域（可能包含调试视图）
+            let content_area = if debug_mode {
+                // 水平分割为内容和调试区域
+                let content_chunks = Layout::default()
+                    .direction(Direction::Horizontal)
+                    .constraints([
+                        Constraint::Percentage(70), // Main content
+                        Constraint::Percentage(30), // Debug info
+                    ])
+                    .split(main_area);
+                
+                // 保存调试区域以供后续使用
+                let debug_area = content_chunks[1];
+                
+                // 渲染主内容
+                let main_panel = Paragraph::new(text.clone())
+                    .block(Block::default().borders(Borders::ALL));
+                f.render_widget(main_panel, content_chunks[0]);
+                
+                // 渲染调试面板
+                if let Some(node) = nodes.get(cursor_pos) {
                     let mut path = vec![];
                     let mut current = node;
                     while let Some(parent) = nodes.iter().find(|n| n.children.contains(current)) {
@@ -330,6 +345,13 @@ fn main() -> io::Result<()> {
                         Value::Tagged(_) => "Tagged",
                     };
 
+                    // 计算长度信息
+                    let length_info = match &node.value {
+                        Value::Sequence(seq) => Some(format!("{}", seq.len())),
+                        Value::Mapping(map) => Some(format!("{}", map.len())),
+                        _ => None,
+                    };
+
                     let expanded_status =
                         if matches!(node.value, Value::Mapping(_) | Value::Sequence(_)) {
                             if node.expanded {
@@ -341,7 +363,7 @@ fn main() -> io::Result<()> {
                             "N/A"
                         };
 
-                    Text::from(vec![
+                    let mut debug_spans = vec![
                         Spans::from(vec![
                             Span::raw("Path: "),
                             Span::styled(path, Style::default().fg(Color::Cyan)),
@@ -350,31 +372,47 @@ fn main() -> io::Result<()> {
                             Span::raw("Type: "),
                             Span::styled(value_type, Style::default().fg(Color::Green)),
                         ]),
-                        Spans::from(vec![
-                            Span::raw("Status: "),
-                            Span::styled(expanded_status, Style::default().fg(Color::Yellow)),
-                        ]),
-                    ])
-                } else {
-                    Text::from("No node selected")
-                };
+                    ];
+                    
+                    // 添加长度信息（如果有）
+                    if let Some(length) = length_info {
+                        debug_spans.push(Spans::from(vec![
+                            Span::raw("Length: "),
+                            Span::styled(length, Style::default().fg(Color::Magenta)),
+                        ]));
+                    }
+                    
+                    // 添加展开状态
+                    debug_spans.push(Spans::from(vec![
+                        Span::raw("Status: "),
+                        Span::styled(expanded_status, Style::default().fg(Color::Yellow)),
+                    ]));
 
-                let debug_panel = Paragraph::new(debug_info)
-                    .block(Block::default().borders(Borders::ALL).title("Debug Info"));
+                    let debug_info = Text::from(debug_spans);
 
-                f.render_widget(main_panel, chunks[0]);
-                f.render_widget(debug_panel, chunks[1]);
+                    let debug_panel = Paragraph::new(debug_info)
+                        .block(Block::default().borders(Borders::ALL).title("Debug Info"));
+                    
+                    f.render_widget(debug_panel, debug_area);
+                }
+                
+                content_chunks[0] // 返回主内容区域供搜索框使用
             } else {
-                f.render_widget(main_panel, chunks[0]);
-            }
+                // 没有调试视图，直接渲染主内容
+                let main_panel = Paragraph::new(text.clone())
+                    .block(Block::default().borders(Borders::ALL));
+                f.render_widget(main_panel, main_area);
+                
+                main_area // 返回主内容区域供搜索框使用
+            };
 
             // 在搜索模式下显示搜索输入框在主视图底部
             if app_mode == AppMode::Search {
                 // 计算搜索框的位置 - 放在主视图底部，但不与边框重叠
                 let search_area = Rect {
-                    x: chunks[0].x + 1, // 增加 x 坐标，避开左边框
-                    y: chunks[0].y + chunks[0].height - 2, // 减少 y 坐标，避开底部边框
-                    width: chunks[0].width - 4, // 减少宽度，避开右边框
+                    x: content_area.x + 1, // 增加 x 坐标
+                    y: content_area.y + content_area.height - 2, // 减少 y 坐标，避开底部边框
+                    width: content_area.width - 4, // 减少宽度，避开右边框
                     height: 1,
                 };
                 
@@ -396,52 +434,54 @@ fn main() -> io::Result<()> {
                 );
             }
 
-            // 根据当前模式显示不同的帮助信息
-            let help_text = match app_mode {
-                AppMode::Normal => {
-                    vec![
-                        Spans::from(vec![
-                            Span::styled("j/↓", Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
-                            Span::raw(": 下移  "),
-                            Span::styled("k/↑", Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
-                            Span::raw(": 上移  "),
-                            Span::styled("h", Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
-                            Span::raw(": 折叠节点  "),
-                            Span::styled("l", Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
-                            Span::raw(": 展开节点  "),
-                        ]),
-                        Spans::from(vec![
-                            Span::styled("/", Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
-                            Span::raw(": 搜索  "),
-                            Span::styled("n", Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
-                            Span::raw(": 下一个匹配  "),
-                            Span::styled("N", Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
-                            Span::raw(": 上一个匹配  "),
-                            Span::styled("Esc", Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
-                            Span::raw(": 取消高亮  "),
-                            Span::styled("q", Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
-                            Span::raw(": 退出"),
-                        ]),
-                    ]
-                },
-                AppMode::Search => {
-                    vec![
-                        Spans::from(vec![
-                            Span::styled("Enter", Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
-                            Span::raw(": 确认搜索  "),
-                            Span::styled("Esc", Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
-                            Span::raw(": 取消搜索"),
-                        ]),
-                    ]
-                },
-            };
-            
-            let help_panel = Paragraph::new(help_text)
-                .block(Block::default().borders(Borders::ALL).title("帮助"))
-                .alignment(tui::layout::Alignment::Center)
-                .style(Style::default());
+            // 只有在启用帮助视图时才渲染帮助面板
+            if let Some(help_area) = help_area_opt {
+                // 根据当前模式显示不同的帮助信息
+                let help_text = match app_mode {
+                    AppMode::Normal => {
+                        vec![
+                            Spans::from(vec![
+                                Span::styled("j/↓", Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
+                                Span::raw(": 下移  "),
+                                Span::styled("k/↑", Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
+                                Span::raw(": 上移  "),
+                                Span::styled("h", Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
+                                Span::raw(": 折叠节点  "),
+                                Span::styled("l", Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
+                                Span::raw(": 展开节点  "),
+                            ]),
+                            Spans::from(vec![
+                                Span::styled("/", Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
+                                Span::raw(": 搜索  "),
+                                Span::styled("n", Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
+                                Span::raw(": 下一个匹配  "),
+                                Span::styled("N", Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
+                                Span::raw(": 上一个匹配  "),
+                                Span::styled("Esc", Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
+                                Span::raw(": 取消高亮  "),
+                                Span::styled("q", Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
+                                Span::raw(": 退出"),
+                            ]),
+                        ]
+                    },
+                    AppMode::Search => {
+                        vec![
+                            Spans::from(vec![
+                                Span::styled("Enter", Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
+                                Span::raw(": 确认搜索  "),
+                                Span::styled("Esc", Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
+                                Span::raw(": 取消搜索"),
+                            ]),
+                        ]
+                    },
+                };
                 
-            f.render_widget(help_panel, help_area);
+                let help_panel = Paragraph::new(help_text)
+                    .style(Style::default())
+                    .alignment(tui::layout::Alignment::Left);
+                    
+                f.render_widget(help_panel, help_area);
+            }
         })?;
 
         if event::poll(Duration::from_millis(100))? {

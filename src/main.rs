@@ -1,12 +1,13 @@
-use crossterm::{
-    event::{self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyEventKind},
-    execute,
-    terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
+use termion::{
+    event::{Event, Key},
+    input::TermRead,
+    raw::IntoRawMode,
+    screen::IntoAlternateScreen,
 };
 use serde_yaml::Value;
-use std::{env, io, path::Path, time::Duration};
+use std::{env, io, path::Path};
 use ratatui::{
-    backend::CrosstermBackend,
+    backend::TermionBackend,
     layout::{Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span, Text},
@@ -18,7 +19,6 @@ use ratatui::{
 const HIGHLIGHT_STYLE: Style = Style::new().fg(Color::Yellow).add_modifier(Modifier::BOLD);
 const CURRENT_MATCH_STYLE: Style = Style::new().fg(Color::Green).add_modifier(Modifier::BOLD);
 const MATCH_STYLE: Style = Style::new().fg(Color::Blue).add_modifier(Modifier::BOLD);
-const POLL_INTERVAL: Duration = Duration::from_millis(100);
 
 #[derive(Debug, PartialEq)]
 struct TreeNode {
@@ -213,19 +213,19 @@ impl AppState {
     }
     
     // 处理正常模式下的按键
-    fn handle_normal_mode_key(&mut self, key: KeyCode) -> bool {
+    fn handle_normal_mode_key(&mut self, key: Key) -> bool {
         let mut should_quit = false;
         
         match key {
-            KeyCode::Char('q') => should_quit = true,
-            KeyCode::Down | KeyCode::Char('j') => self.move_cursor_down(),
-            KeyCode::Up | KeyCode::Char('k') => self.move_cursor_up(),
-            KeyCode::Char('h') => self.collapse_node(),
-            KeyCode::Char('l') => self.expand_node(),
-            KeyCode::Char('/') => self.enter_search_mode(),
-            KeyCode::Char('n') => self.next_search_match(),
-            KeyCode::Char('N') => self.prev_search_match(),
-            KeyCode::Esc => self.clear_search(),
+            Key::Char('q') => should_quit = true,
+            Key::Down | Key::Char('j') => self.move_cursor_down(),
+            Key::Up | Key::Char('k') => self.move_cursor_up(),
+            Key::Char('h') => self.collapse_node(),
+            Key::Char('l') => self.expand_node(),
+            Key::Char('/') => self.enter_search_mode(),
+            Key::Char('n') => self.next_search_match(),
+            Key::Char('N') => self.prev_search_match(),
+            Key::Esc => self.clear_search(),
             _ => {}
         }
         
@@ -233,12 +233,12 @@ impl AppState {
     }
     
     // 处理搜索模式下的按键
-    fn handle_search_mode_key(&mut self, key: KeyCode) {
+    fn handle_search_mode_key(&mut self, key: Key) {
         match key {
-            KeyCode::Esc => self.exit_search_mode(),
-            KeyCode::Enter => self.perform_search(),
-            KeyCode::Char(c) => self.search_query.push(c),
-            KeyCode::Backspace => { self.search_query.pop(); },
+            Key::Esc => self.exit_search_mode(),
+            Key::Char('\n') => self.perform_search(),
+            Key::Char(c) => self.search_query.push(c),
+            Key::Backspace => { self.search_query.pop(); },
             _ => {}
         }
     }
@@ -636,43 +636,40 @@ fn main() -> io::Result<()> {
     // 初始化应用状态
     let mut app_state = AppState::new(&input, debug_mode, show_help);
     
-    // 初始化终端
-    enable_raw_mode()?;
-    let mut stdout = io::stdout();
-    execute!(stdout, EnterAlternateScreen, EnableMouseCapture)?;
-    let backend = CrosstermBackend::new(stdout);
+    // 初始化终端 - 使用 termion
+    let stdout = io::stdout().into_raw_mode()?.into_alternate_screen()?;
+    let backend = TermionBackend::new(stdout);
     let mut terminal = Terminal::new(backend)?;
 
     let mut should_quit = false;
+    
+    // 创建事件读取器
+    let stdin = io::stdin();
+    let mut events = stdin.events();
     
     // 主循环
     while !should_quit {
         terminal.draw(|f| render_ui(f, &app_state))?;
 
-        if event::poll(POLL_INTERVAL)? {
-            if let Event::Key(key) = event::read()? {
-                if key.kind == KeyEventKind::Press {
+        // 使用 termion 的事件处理
+        if let Some(Ok(event)) = events.next() {
+            match event {
+                Event::Key(key) => {
                     match app_state.app_mode {
                         AppMode::Normal => {
-                            should_quit = app_state.handle_normal_mode_key(key.code);
+                            should_quit = app_state.handle_normal_mode_key(key);
                         }
                         AppMode::Search => {
-                            app_state.handle_search_mode_key(key.code);
+                            app_state.handle_search_mode_key(key);
                         }
                     }
-                }
+                },
+                _ => {}
             }
         }
     }
 
-    // 清理终端
-    disable_raw_mode()?;
-    execute!(
-        terminal.backend_mut(),
-        LeaveAlternateScreen,
-        DisableMouseCapture
-    )?;
-    terminal.show_cursor()?;
+    // 不需要显式清理，当 terminal 被 drop 时，termion 会自动进行清理
 
     Ok(())
 }

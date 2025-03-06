@@ -8,5 +8,6 @@ crossterm = "0.28.1"
 serde = { version = "1.0.217", features = ["derive"] }
 serde_yaml = "0.9.34"
 textwrap = "0.16.1"
-ratatui = "0.26.0"
+ratatui = { version = "0.26.0", default-features = false, features = ["termion"] }
+termion = "2.0.1"
 

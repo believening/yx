@@ -1,11 +1,16 @@
 use termion::{
     event::{Event, Key},
-    input::TermRead,
     raw::IntoRawMode,
     screen::IntoAlternateScreen,
 };
 use serde_yaml::Value;
-use std::{env, io, path::Path};
+use std::{
+    env, fs,
+    io::{self, Read},
+    path::Path,
+    fs::File,
+    error::Error,
+};
 use ratatui::{
     backend::TermionBackend,
     layout::{Constraint, Direction, Layout, Rect},
@@ -82,12 +87,12 @@ impl TreeNode {
         }
         result
     }
-    
+
     // 提取判断是否为容器类型的逻辑为函数
     fn is_container(value: &Value) -> bool {
         matches!(value, Value::Mapping(_) | Value::Sequence(_))
     }
-    
+
     // 添加获取格式化内容的函数
     fn get_formatted_content(&self) -> String {
         match &self.value {
@@ -123,11 +128,11 @@ impl TreeNode {
             }
         }
     }
-    
+
     // 添加获取完整显示文本的函数
     fn get_display_text(&self) -> String {
         let indent = "  ".repeat(self.depth);
-        
+
         if Self::is_container(&self.value) && self.expanded {
             format!("{}{}:", indent, self.key)
         } else {
@@ -136,9 +141,41 @@ impl TreeNode {
     }
 }
 
-fn build_yaml_tree(input: &str) -> TreeNode {
-    let value: Value = serde_yaml::from_str(input).expect("无法解析YAML");
-    TreeNode::new("root".to_string(), value, 0)
+// 自定义错误类型，便于错误处理
+#[derive(Debug)]
+enum AppError {
+    Io(io::Error),
+    YamlParse(serde_yaml::Error),
+    EmptyInput,
+}
+
+impl From<io::Error> for AppError {
+    fn from(err: io::Error) -> Self {
+        AppError::Io(err)
+    }
+}
+
+impl From<serde_yaml::Error> for AppError {
+    fn from(err: serde_yaml::Error) -> Self {
+        AppError::YamlParse(err)
+    }
+}
+
+impl std::fmt::Display for AppError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            AppError::Io(err) => write!(f, "IO错误: {}", err),
+            AppError::YamlParse(err) => write!(f, "YAML解析错误: {}", err),
+            AppError::EmptyInput => write!(f, "输入的YAML内容为空"),
+        }
+    }
+}
+
+impl Error for AppError {}
+
+fn build_yaml_tree(input: &str) -> Result<TreeNode, AppError> {
+    let value: Value = serde_yaml::from_str(input)?;
+    Ok(TreeNode::new("root".to_string(), value, 0))
 }
 
 fn process_node(tree: &mut TreeNode, cursor_pos: usize, mut action: impl FnMut(&mut TreeNode)) {
@@ -196,12 +233,12 @@ struct AppState {
 }
 
 impl AppState {
-    fn new(yaml_content: &str, debug_mode: bool, show_help: bool) -> Self {
-        let mut tree = build_yaml_tree(yaml_content);
-        tree.expanded = true;
-        
+    fn new(tree: TreeNode, debug_mode: bool, show_help: bool) -> Self {
+        let mut root = tree;
+        root.expanded = true;
+
         Self {
-            tree,
+            tree: root,
             cursor_pos: 0,
             app_mode: AppMode::Normal,
             search_query: String::new(),
@@ -211,11 +248,11 @@ impl AppState {
             show_help,
         }
     }
-    
+
     // 处理正常模式下的按键
     fn handle_normal_mode_key(&mut self, key: Key) -> bool {
         let mut should_quit = false;
-        
+
         match key {
             Key::Char('q') => should_quit = true,
             Key::Down | Key::Char('j') => self.move_cursor_down(),
@@ -228,10 +265,10 @@ impl AppState {
             Key::Esc => self.clear_search(),
             _ => {}
         }
-        
+
         should_quit
     }
-    
+
     // 处理搜索模式下的按键
     fn handle_search_mode_key(&mut self, key: Key) {
         match key {
@@ -242,42 +279,42 @@ impl AppState {
             _ => {}
         }
     }
-    
+
     fn move_cursor_down(&mut self) {
         let total_lines = self.tree.flatten().len();
         if self.cursor_pos < total_lines - 1 {
             self.cursor_pos += 1;
         }
     }
-    
+
     fn move_cursor_up(&mut self) {
         if self.cursor_pos > 0 {
             self.cursor_pos -= 1;
         }
     }
-    
+
     fn collapse_node(&mut self) {
         process_node(&mut self.tree, self.cursor_pos, |node| node.expanded = false);
     }
-    
+
     fn expand_node(&mut self) {
         process_node(&mut self.tree, self.cursor_pos, |node| node.expanded = true);
     }
-    
+
     fn enter_search_mode(&mut self) {
         self.app_mode = AppMode::Search;
         self.search_query.clear();
     }
-    
+
     fn exit_search_mode(&mut self) {
         self.app_mode = AppMode::Normal;
     }
-    
+
     fn clear_search(&mut self) {
         self.search_results.clear();
         self.search_query.clear();
     }
-    
+
     fn next_search_match(&mut self) {
         if !self.search_results.is_empty() {
             self.current_match = (self.current_match + 1) % self.search_results.len();
@@ -286,7 +323,7 @@ impl AppState {
             }
         }
     }
-    
+
     fn prev_search_match(&mut self) {
         if !self.search_results.is_empty() {
             self.current_match = if self.current_match == 0 {
@@ -299,27 +336,27 @@ impl AppState {
             }
         }
     }
-    
+
     fn perform_search(&mut self) {
         self.app_mode = AppMode::Normal;
-        
+
         if !self.search_query.is_empty() {
             let query = self.search_query.to_lowercase();
             self.search_results.clear();
-            
+
             for (i, node) in self.tree.flatten().iter().enumerate() {
                 let node_text = node.key.to_lowercase();
                 if node_text.contains(&query) {
                     self.search_results.push(i);
                 }
-                
+
                 if let Value::String(s) = &node.value {
                     if s.to_lowercase().contains(&query) {
                         self.search_results.push(i);
                     }
                 }
             }
-            
+
             if !self.search_results.is_empty() {
                 self.current_match = 0;
                 self.cursor_pos = self.search_results[0];
@@ -335,10 +372,10 @@ fn render_ui(
 ) {
     let size = f.size();
     let nodes = state.tree.flatten();
-    
+
     // 构建文本内容
     let text = build_text_content(&nodes, state);
-    
+
     // 布局管理
     let (main_area, help_area_opt) = if state.show_help {
         // 垂直分割为内容区域和帮助区域
@@ -354,19 +391,19 @@ fn render_ui(
         // 没有帮助视图，内容区域占据全部
         (size, None)
     };
-    
+
     // 处理内容区域（可能包含调试视图）
     let content_area = if state.debug_mode {
         render_with_debug(f, main_area, &text, &nodes, state.cursor_pos)
     } else {
         render_main_content(f, main_area, &text)
     };
-    
+
     // 在搜索模式下显示搜索输入框
     if state.app_mode == AppMode::Search {
         render_search_box(f, content_area, &state.search_query);
     }
-    
+
     // 渲染帮助面板
     if let Some(help_area) = help_area_opt {
         render_help_panel(f, help_area, &state.app_mode);
@@ -375,7 +412,7 @@ fn render_ui(
 
 // 构建文本内容函数
 fn build_text_content<'a>(
-    nodes: &Vec<&'a TreeNode>, 
+    nodes: &Vec<&'a TreeNode>,
     state: &AppState
 ) -> Vec<Line<'a>> {
     nodes
@@ -384,14 +421,14 @@ fn build_text_content<'a>(
         .map(|(i, node)| {
             let full_text = node.get_display_text();
             let max_width = 100; // 假设一个合理的最大宽度
-            
+
             let wrapped_text = textwrap::wrap(&full_text, max_width)
                 .into_iter()
                 .map(|line| {
                     // 应用样式逻辑
                     if i == state.cursor_pos {
                         Line::from(vec![Span::styled(line.to_string(), HIGHLIGHT_STYLE)])
-                    } 
+                    }
                     else if !state.search_query.is_empty() && state.search_results.contains(&i) {
                         if state.search_results.get(state.current_match) == Some(&i) {
                             Line::from(vec![Span::styled(line.to_string(), CURRENT_MATCH_STYLE)])
@@ -403,7 +440,7 @@ fn build_text_content<'a>(
                     }
                 })
                 .collect::<Vec<_>>();
-            
+
             // 处理换行
             let wrapped_len = wrapped_text.len();
             let mut result = Vec::new();
@@ -447,17 +484,17 @@ fn render_with_debug(
             Constraint::Percentage(30), // Debug info
         ])
         .split(area);
-    
+
     // 渲染主内容
     let main_panel = Paragraph::new(text.to_vec())
         .block(Block::default().borders(Borders::ALL));
     f.render_widget(main_panel, content_chunks[0]);
-    
+
     // 渲染调试面板
     if let Some(node) = nodes.get(cursor_pos) {
         render_debug_panel(f, content_chunks[1], node, nodes);
     }
-    
+
     content_chunks[0]
 }
 
@@ -515,7 +552,7 @@ fn render_debug_panel(
             Span::styled(value_type, Style::default().fg(Color::Green)),
         ]),
     ];
-    
+
     // 添加长度信息（如果有）
     if let Some(length) = length_info {
         debug_spans.push(Line::from(vec![
@@ -523,7 +560,7 @@ fn render_debug_panel(
             Span::styled(length, Style::default().fg(Color::Magenta)),
         ]));
     }
-    
+
     // 添加展开状态
     debug_spans.push(Line::from(vec![
         Span::raw("Status: "),
@@ -533,7 +570,7 @@ fn render_debug_panel(
     let debug_info = Text::from(debug_spans);
     let debug_panel = Paragraph::new(debug_info)
         .block(Block::default().borders(Borders::ALL).title("Debug Info"));
-    
+
     f.render_widget(debug_panel, area);
 }
 
@@ -549,17 +586,17 @@ fn render_search_box(
         width: content_area.width - 4,
         height: 1,
     };
-    
+
     let search_span = Line::from(vec![
         Span::styled("/", Style::default().fg(Color::Yellow)),
         Span::raw(search_query),
     ]);
-    
+
     let search_paragraph = Paragraph::new(vec![search_span])
         .style(Style::default());
-    
+
     f.render_widget(search_paragraph, search_area);
-    
+
     // 显示光标位置
     f.set_cursor(
         search_area.x + search_query.len() as u16 + 1,
@@ -611,42 +648,96 @@ fn render_help_panel(
             ]
         },
     };
-    
+
     let help_panel = Paragraph::new(help_text)
         .style(Style::default())
         .alignment(ratatui::layout::Alignment::Left);
-        
+
     f.render_widget(help_panel, area);
 }
 
-fn main() -> io::Result<()> {
+// 读取输入（从文件或标准输入）
+fn read_input(file_path: Option<String>) -> Result<String, AppError> {
+    let input = if let Some(path) = file_path {
+        // 从文件读取
+        fs::read_to_string(Path::new(&path))?
+    } else {
+        // 检查stdin是否来自管道
+        let stdin_is_pipe = !atty::is(atty::Stream::Stdin);
+
+        if stdin_is_pipe {
+            // 从管道读取
+            let mut buffer = String::new();
+            io::stdin().read_to_string(&mut buffer)?;
+            buffer
+        } else {
+            // 没有提供文件路径且没有管道输入
+            return Err(AppError::EmptyInput);
+        }
+    };
+
+    // 检查输入是否为空
+    if input.trim().is_empty() {
+        return Err(AppError::EmptyInput);
+    }
+
+    Ok(input)
+}
+
+// 获取终端事件输入源（跨平台支持）
+fn get_input_source() -> Result<Box<dyn Read>, io::Error> {
+    if atty::is(atty::Stream::Stdin) {
+        // 如果stdin是终端，直接使用stdin
+        Ok(Box::new(io::stdin()))
+    } else {
+        // 如果stdin是管道，使用/dev/tty（Unix系统）或尝试其他方法（Windows系统）
+        #[cfg(unix)]
+        {
+            Ok(Box::new(File::open("/dev/tty")?))
+        }
+        #[cfg(not(unix))]
+        {
+            // Windows系统下的替代方案
+            // 注意：Windows下可能需要使用不同的方法获取控制台输入
+            // 这里使用标准输入作为后备，但可能在管道重定向情况下不工作
+            eprintln!("警告：在非Unix系统上，管道输入模式下的键盘交互可能无法正常工作");
+            Ok(Box::new(io::stdin()))
+        }
+    }
+}
+
+fn run_app() -> Result<(), AppError> {
     // 解析命令行参数
     let args: Vec<String> = env::args().collect();
     let (debug_mode, show_help, file_path) = parse_args(&args);
-    
-    // 如果没有提供文件路径，显示用法信息并退出
-    if file_path.is_none() {
-        show_usage(&args[0]);
-        return Ok(());
-    }
 
-    // 读取YAML内容 - 简化逻辑，只从文件读取
-    let input = std::fs::read_to_string(Path::new(&file_path.unwrap()))?;
+    // 读取YAML内容
+    let input = match read_input(file_path) {
+        Ok(content) => content,
+        Err(AppError::EmptyInput) => {
+            show_usage(&args[0]);
+            return Ok(());
+        },
+        Err(e) => return Err(e),
+    };
+
+    // 解析YAML并构建树
+    let tree = build_yaml_tree(&input)?;
 
     // 初始化应用状态
-    let mut app_state = AppState::new(&input, debug_mode, show_help);
-    
-    // 初始化终端 - 使用 termion
+    let mut app_state = AppState::new(tree, debug_mode, show_help);
+
+    // 初始化终端
     let stdout = io::stdout().into_raw_mode()?.into_alternate_screen()?;
     let backend = TermionBackend::new(stdout);
     let mut terminal = Terminal::new(backend)?;
 
-    let mut should_quit = false;
-    
     // 创建事件读取器
-    let stdin = io::stdin();
-    let mut events = stdin.events();
-    
+    let input = get_input_source()?;
+    let mut events = termion::input::TermRead::events(input);
+
+    let mut should_quit = false;
+
     // 主循环
     while !should_quit {
         terminal.draw(|f| render_ui(f, &app_state))?;
@@ -669,8 +760,6 @@ fn main() -> io::Result<()> {
         }
     }
 
-    // 不需要显式清理，当 terminal 被 drop 时，termion 会自动进行清理
-
     Ok(())
 }
 
@@ -691,14 +780,23 @@ fn parse_args(args: &[String]) -> (bool, bool, Option<String>) {
             }
         }
     }
-    
+
     (debug_mode, show_help, file_path)
 }
 
 // 显示用法信息
 fn show_usage(program_name: &str) {
-    println!("用法: {} [--debug] [--help] <yaml文件路径>", program_name);
+    println!("用法: {} [--debug] [--help] [<yaml文件路径>]", program_name);
+    println!("或者: cat some.yaml | {} [--debug] [--help]", program_name);
     println!("选项:");
     println!("  --debug    启用调试模式");
     println!("  --help, -h 显示帮助视图");
+}
+
+fn main() {
+    // 使用更优雅的错误处理
+    if let Err(e) = run_app() {
+        eprintln!("错误: {}", e);
+        std::process::exit(1);
+    }
 }

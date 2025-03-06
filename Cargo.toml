@@ -10,4 +10,5 @@ serde_yaml = "0.9.34"
 textwrap = "0.16.1"
 ratatui = { version = "0.26.0", default-features = false, features = ["termion"] }
 termion = "2.0.1"
+atty = "0.2"
 
